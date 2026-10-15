@@ -1,0 +1,36 @@
+name: Upload an IPA to TestFlight
+
+# Unity's cloud builder makes the signed IPA; this sends it to TestFlight from a Mac,
+# because Apple's upload tool only runs on macOS. The IPA is attached to a GitHub release.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag that holds the IPA
+        required: true
+
+jobs:
+  upload:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download the IPA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${{ inputs.tag }}" -R "$GITHUB_REPOSITORY" -p "*.ipa" -D "$RUNNER_TEMP/ipa"
+
+      - name: Upload with altool
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          mkdir -p ~/private_keys
+          printf '%s' "$ASC_KEY_P8" > ~/private_keys/AuthKey_${ASC_KEY_ID}.p8
+          ipa=$(ls "$RUNNER_TEMP"/ipa/*.ipa)
+          echo "IPA size: $(stat -f%z "$ipa") bytes" | tee -a "$GITHUB_STEP_SUMMARY"
+          xcrun altool --upload-app --type ios --file "$ipa" --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+
+      - name: Remove the key
+        if: always()
+        run: rm -rf ~/private_keys
