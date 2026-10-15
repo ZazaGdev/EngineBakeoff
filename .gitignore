@@ -5,6 +5,7 @@ secrets/
 *.mobileprovision
 *.cer
 *.ulf
+*.env
 
 # Godot
 godot/.godot/
