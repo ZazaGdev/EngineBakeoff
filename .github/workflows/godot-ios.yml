@@ -1,0 +1,104 @@
+name: Godot iOS to TestFlight
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["godot/**", ".github/workflows/godot-ios.yml"]
+
+concurrency:
+  group: godot-ios
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: 4.7.2
+  # Signing material lives in repository secrets only, never in the repo.
+  ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+  ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+  APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pick the newest Xcode
+        run: |
+          latest=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$latest"
+          xcodebuild -version
+
+      - name: Download Godot and export templates (official release, SHA512 checked)
+        run: |
+          mkdir -p "$RUNNER_TEMP/godot" && cd "$RUNNER_TEMP/godot"
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
+          for f in "Godot_v${GODOT_VERSION}-stable_macos.universal.zip" "Godot_v${GODOT_VERSION}-stable_export_templates.tpz" SHA512-SUMS.txt; do
+            curl -sSfL -o "$f" "$base/$f"
+          done
+          grep -E " (Godot_v${GODOT_VERSION}-stable_macos.universal.zip|Godot_v${GODOT_VERSION}-stable_export_templates.tpz)$" SHA512-SUMS.txt > want.txt
+          shasum -a 512 -c want.txt
+          unzip -q "Godot_v${GODOT_VERSION}-stable_macos.universal.zip"
+          tpl="$HOME/Library/Application Support/Godot/export_templates/${GODOT_VERSION}.stable"
+          mkdir -p "$tpl"
+          unzip -q "Godot_v${GODOT_VERSION}-stable_export_templates.tpz" -d tpl
+          cp -R tpl/templates/* "$tpl/"
+          echo "GODOT=$RUNNER_TEMP/godot/Godot.app/Contents/MacOS/Godot" >> "$GITHUB_ENV"
+
+      - name: Fill team ID and build number
+        run: |
+          sed -i '' "s/APPLE_TEAM_ID_PLACEHOLDER/${APPLE_TEAM_ID}/" godot/export_presets.cfg
+          sed -i '' "s/^application\/version=.*/application\/version=\"${GITHUB_RUN_NUMBER}\"/" godot/export_presets.cfg
+
+      - name: Export the Xcode project
+        run: |
+          "$GODOT" --headless --path godot --import || true
+          mkdir -p godot/build/ios
+          "$GODOT" --headless --path godot --export-release "iOS" build/ios/BakeoffGodot.ipa
+          ls -la godot/build/ios
+
+      - name: Write the App Store Connect key
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/keys"
+          printf '%s' "$ASC_KEY_P8" > "$RUNNER_TEMP/keys/AuthKey_${ASC_KEY_ID}.p8"
+          echo "KEY_PATH=$RUNNER_TEMP/keys/AuthKey_${ASC_KEY_ID}.p8" >> "$GITHUB_ENV"
+
+      - name: Archive
+        run: |
+          cd godot/build/ios
+          xcodebuild -project BakeoffGodot.xcodeproj -scheme BakeoffGodot -configuration Release \
+            -destination generic/platform=iOS -archivePath "$RUNNER_TEMP/BakeoffGodot.xcarchive" archive \
+            -allowProvisioningUpdates -authenticationKeyPath "$KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY="Apple Development" \
+            PROVISIONING_PROFILE_SPECIFIER="" PROVISIONING_PROFILE=""
+
+      - name: Export the IPA and upload to TestFlight
+        run: |
+          for dest in export upload; do
+            cat > "$RUNNER_TEMP/ExportOptions-$dest.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>$dest</string>
+            <key>teamID</key><string>$APPLE_TEAM_ID</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict></plist>
+          EOF
+            xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/BakeoffGodot.xcarchive" \
+              -exportOptionsPlist "$RUNNER_TEMP/ExportOptions-$dest.plist" -exportPath "$RUNNER_TEMP/out-$dest" \
+              -allowProvisioningUpdates -authenticationKeyPath "$KEY_PATH" \
+              -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+          done
+          ls -la "$RUNNER_TEMP/out-export"
+          size=$(stat -f%z "$RUNNER_TEMP"/out-export/*.ipa)
+          echo "IPA size: $size bytes ($((size / 1048576)) MB), build ${GITHUB_RUN_NUMBER}" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove the key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/keys"
