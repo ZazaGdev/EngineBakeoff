@@ -114,6 +114,29 @@ def unity_signing():
     print("profile created:", prof["attributes"]["name"])
 
 
+def testflight():
+    """Gives both apps an internal TestFlight group that gets every build, with every
+    App Store Connect user of the team in it."""
+    users = call("GET", "/v1/users?limit=50")["data"]
+    for a in call("GET", "/v1/apps?limit=50")["data"]:
+        if a["attributes"]["bundleId"] not in BUNDLES:
+            continue
+        groups = call("GET", f"/v1/apps/{a['id']}/betaGroups")["data"]
+        group = next((g for g in groups if g["attributes"]["name"] == "Owner"), None)
+        if group is None:
+            body = {"data": {"type": "betaGroups",
+                             "attributes": {"name": "Owner", "isInternalGroup": True, "hasAccessToAllBuilds": True},
+                             "relationships": {"app": {"data": {"type": "apps", "id": a["id"]}}}}}
+            group = call("POST", "/v1/betaGroups", body)["data"]
+        for u in users:
+            at = u["attributes"]
+            body = {"data": {"type": "betaTesters",
+                             "attributes": {"email": at["username"], "firstName": at["firstName"], "lastName": at["lastName"]},
+                             "relationships": {"betaGroups": {"data": [{"type": "betaGroups", "id": group["id"]}]}}}}
+            call("POST", "/v1/betaTesters", body)
+        print(a["attributes"]["name"], ": internal group ready,", len(users), "tester(s)")
+
+
 def certs():
     for c in call("GET", "/v1/certificates?limit=50")["data"]:
         at = c["attributes"]
@@ -121,5 +144,5 @@ def certs():
 
 
 if __name__ == "__main__":
-    {"bundle-ids": bundle_ids, "apps": apps, "builds": builds, "certs": certs,
+    {"bundle-ids": bundle_ids, "apps": apps, "builds": builds, "certs": certs, "testflight": testflight,
      "unity-signing": unity_signing}[sys.argv[1]]()
