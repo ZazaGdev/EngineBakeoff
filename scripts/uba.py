@@ -114,7 +114,17 @@ def status():
 def download(out):
     bld = call("GET", f"{base()}/buildtargets/{TARGET}/builds?per_page=1")[0]
     url = bld["links"]["download_primary"]["href"]
-    urllib.request.urlretrieve(url, out)
+    # The link answers with a redirect to a signed storage URL, which must be fetched without our key.
+    try:
+        urllib.request.urlopen(urllib.request.Request(url, headers={"Authorization": auth()}))
+        sys.exit("expected a redirect to the file")
+    except urllib.error.HTTPError as e:
+        if e.code not in (301, 302, 303, 307):
+            raise
+        url = e.headers["Location"] or json.loads(e.read())  # v2 puts the URL in the body
+    with urllib.request.urlopen(url) as r, open(out, "wb") as f:
+        while chunk := r.read(1 << 20):
+            f.write(chunk)
     print("build", bld["build"], "saved,", Path(out).stat().st_size, "bytes")
 
 
