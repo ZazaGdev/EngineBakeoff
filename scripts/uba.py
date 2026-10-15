@@ -42,7 +42,8 @@ def call(method, path, body=None, raw=None, content_type="application/json"):
             text = r.read()
             return json.loads(text) if text else {}
     except urllib.error.HTTPError as e:
-        sys.exit(f"{method} {path} failed: {e.code} {e.read()[:500].decode(errors='replace')}")
+        shown = path.replace(env().get("UNITY_ORG_ID", "?"), "{org}").replace(env().get("UNITY_PROJECT_ID", "?"), "{project}")
+        sys.exit(f"{method} {shown} failed: {e.code} {e.read()[:500].decode(errors='replace')}")
 
 
 REPO = "https://github.com/ZazaGdev/EngineBakeoff.git"
@@ -70,7 +71,9 @@ def multipart(fields, files):
 def setup(unity_version):
     """Points the project at the public repo, uploads the iOS signing files and makes the iOS target."""
     b = base()
-    call("PUT", b, {"settings": {"scm": {"type": "git", "url": REPO}}})
+    if not call("GET", b).get("settings", {}).get("scm", {}).get("url"):
+        # A service account gets a server error here; the repo is then set in the dashboard.
+        call("PUT", b, {"settings": {"scm": {"type": "git", "url": REPO}}})
     print("repo set")
     sec = ROOT / "secrets"
     creds = call("GET", b + "/credentials/signing/ios")
