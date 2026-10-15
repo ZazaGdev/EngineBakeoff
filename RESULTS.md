@@ -53,5 +53,6 @@ Unity only: **6 steps**
   itself.
 - Xcode's own upload step failed its App Store Connect check with an API key; Apple's
   `altool` uploads fine.
-- Unity's IPA is bigger mainly because it carries every animation clip of both FBX models,
-  plus the URP shader set; download sizes come out almost the same after Apple's thinning.
+- Unity's uploaded IPA is over three times Godot's, but after Apple's thinning the iPhone
+  download is almost the same; installed, Unity is 14.5 MB bigger. Why the IPA differs was
+  not investigated.
