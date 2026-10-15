@@ -78,27 +78,30 @@ jobs:
 
       - name: Export the IPA and upload to TestFlight
         run: |
-          for dest in export upload; do
-            cat > "$RUNNER_TEMP/ExportOptions-$dest.plist" <<EOF
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0"><dict>
             <key>method</key><string>app-store-connect</string>
-            <key>destination</key><string>$dest</string>
+            <key>destination</key><string>export</string>
             <key>teamID</key><string>$APPLE_TEAM_ID</string>
             <key>signingStyle</key><string>automatic</string>
             <key>manageAppVersionAndBuildNumber</key><false/>
           </dict></plist>
           EOF
-            xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/BakeoffGodot.xcarchive" \
-              -exportOptionsPlist "$RUNNER_TEMP/ExportOptions-$dest.plist" -exportPath "$RUNNER_TEMP/out-$dest" \
-              -allowProvisioningUpdates -authenticationKeyPath "$KEY_PATH" \
-              -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID"
-          done
-          ls -la "$RUNNER_TEMP/out-export"
-          size=$(stat -f%z "$RUNNER_TEMP"/out-export/*.ipa)
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/BakeoffGodot.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" -exportPath "$RUNNER_TEMP/out" \
+            -allowProvisioningUpdates -authenticationKeyPath "$KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+          ipa=$(ls "$RUNNER_TEMP"/out/*.ipa)
+          size=$(stat -f%z "$ipa")
           echo "IPA size: $size bytes ($((size / 1048576)) MB), build ${GITHUB_RUN_NUMBER}" | tee -a "$GITHUB_STEP_SUMMARY"
+          # xcodebuild's own upload fails its App Store Connect check with an API key,
+          # so upload with altool, which reads the key from ~/private_keys.
+          mkdir -p ~/private_keys
+          cp "$KEY_PATH" ~/private_keys/
+          xcrun altool --upload-app --type ios --file "$ipa" --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
 
       - name: Remove the key
         if: always()
-        run: rm -rf "$RUNNER_TEMP/keys"
+        run: rm -rf "$RUNNER_TEMP/keys" ~/private_keys
