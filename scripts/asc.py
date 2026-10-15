@@ -77,5 +77,49 @@ def builds():
         print(app, at["version"], at["processingState"], at["uploadedDate"])
 
 
+def unity_signing():
+    """Makes an Apple Distribution certificate and an App Store profile for the Unity app,
+    for Unity Build Automation (which wants a .p12 and a .mobileprovision). Files go to secrets/."""
+    import base64
+    import secrets as pysecrets
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.hazmat.primitives.serialization import pkcs12
+    from cryptography.x509.oid import NameOID
+
+    out = ROOT / "secrets"
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    csr = (x509.CertificateSigningRequestBuilder()
+           .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "EngineBakeoff Unity")]))
+           .sign(key, hashes.SHA256()))
+    csr_pem = csr.public_bytes(serialization.Encoding.PEM).decode()
+    body = {"data": {"type": "certificates", "attributes": {"certificateType": "DISTRIBUTION", "csrContent": csr_pem}}}
+    cert_data = call("POST", "/v1/certificates", body)["data"]
+    cert = x509.load_der_x509_certificate(base64.b64decode(cert_data["attributes"]["certificateContent"]))
+    password = pysecrets.token_urlsafe(18)
+    p12 = pkcs12.serialize_key_and_certificates(
+        b"EngineBakeoff Unity", key, cert, None, serialization.BestAvailableEncryption(password.encode()))
+    (out / "unity_distribution.p12").write_bytes(p12)
+    (out / "unity_distribution_p12_password.txt").write_text(password)
+    print("certificate created:", cert_data["attributes"]["name"], "expires", cert_data["attributes"]["expirationDate"])
+
+    bundle = [b for b in call("GET", "/v1/bundleIds?limit=200")["data"]
+              if b["attributes"]["identifier"] == "dev.zazag.bakeoffunity"][0]
+    body = {"data": {"type": "profiles", "attributes": {"name": "EngineBakeoff Unity App Store", "profileType": "IOS_APP_STORE"},
+                     "relationships": {"bundleId": {"data": {"type": "bundleIds", "id": bundle["id"]}},
+                                       "certificates": {"data": [{"type": "certificates", "id": cert_data["id"]}]}}}}
+    prof = call("POST", "/v1/profiles", body)["data"]
+    (out / "unity_appstore.mobileprovision").write_bytes(base64.b64decode(prof["attributes"]["profileContent"]))
+    print("profile created:", prof["attributes"]["name"])
+
+
+def certs():
+    for c in call("GET", "/v1/certificates?limit=50")["data"]:
+        at = c["attributes"]
+        print(at["certificateType"], "|", at["name"], "|", at["expirationDate"])
+
+
 if __name__ == "__main__":
-    {"bundle-ids": bundle_ids, "apps": apps, "builds": builds}[sys.argv[1]]()
+    {"bundle-ids": bundle_ids, "apps": apps, "builds": builds, "certs": certs,
+     "unity-signing": unity_signing}[sys.argv[1]]()
