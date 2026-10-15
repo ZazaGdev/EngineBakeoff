@@ -91,8 +91,9 @@ def setup(unity_version):
     body = {"name": TARGET, "platform": "ios", "enabled": True,
             "settings": {"autoBuild": False, "unityVersion": unity_version, "executablename": "BakeoffUnity",
                          "operatingSystemSelected": "mac",
-                         "scm": {"type": "git", "repo": REPO, "branch": "main", "subdirectory": "unity"},
-                         "platform": {"bundleId": "dev.zazag.bakeoffunity", "xcodeVersion": "latest"}},
+                         # "oauth" is the GitHub connection the owner made in the dashboard.
+                         "scm": {"type": "oauth", "branch": "main", "subdirectory": "unity"},
+                         "platform": {"bundleId": "dev.zazag.bakeoffunity", "xcodeVersion": "xcode26_5_0"}},
             "credentials": {"signing": {"credentialid": cred["credentialid"]}}}
     t = call("POST", b + "/buildtargets", body)
     print("build target created:", t.get("buildtargetid"))
